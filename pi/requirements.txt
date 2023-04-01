@@ -1,0 +1,6 @@
+Adafruit_BluefruitLE==0.9.10
+adafruit_circuitpython_ble==9.0.1
+bleak==0.11.0
+bluezero==0.7.1
+paho_mqtt==1.6.1
+PyGObject==3.38.0

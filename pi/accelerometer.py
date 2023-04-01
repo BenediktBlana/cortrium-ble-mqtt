@@ -3,11 +3,11 @@
 # SPDX-License-Identifier: MIT
 
 # Connect to an "eval()" service over BLE UART.
-
+import time
 from adafruit_ble import BLERadio
 from adafruit_ble.advertising.standard import ProvideServicesAdvertisement
 from adafruit_ble.services.nordic import UARTService
-import io
+import paho.mqtt.client as mqtt
 
 ble = BLERadio()
 
@@ -30,7 +30,10 @@ def convert_16bit_sign_value(value):
 
 def decode_c(Line):
     Length = Line[0]
-    print(Length)
+    if (Length < 57):
+        return print('Telegram is too short')
+    else:
+        print("Telegram length: ", Length)
     index = 0
 
     # Decodes Part1 of the telegram
@@ -53,6 +56,10 @@ def decode_c(Line):
     if (Acc_X and Acc_Y and Acc_Z):
         print(f'Accelererometer X: {Acc_X/16} Y: {Acc_Y/16} Z: {Acc_Z/16}')
 
+    topic = "cortrium/accelerometer"
+    message = f'{{ "x": "{Acc_X/16}", "y": {Acc_Y/16}, "y": {Acc_Z/16} }}'
+    client.publish(topic, message)
+
     # index += 4
     # Events = Line[index] & 0x0F
     # index += 1
@@ -61,10 +68,18 @@ def decode_c(Line):
     # LOD_Active = 0x00
 
 
+# set up MQTT
+client = mqtt.Client()
+client.connect("localhost", 1883)
+
 while True:
     if not uart_connection:
         print("Trying to connect...")
         for adv in ble.start_scan(ProvideServicesAdvertisement):
+            if adv.complete_name == 'C3050319':
+                print("RSSI: ", adv.rssi)
+                print("RSSI: ", adv.address)
+
             if UARTService in adv.services:
                 uart_connection = ble.connect(adv)
                 print("Connected")
@@ -74,7 +89,17 @@ while True:
     if uart_connection and uart_connection.connected:
         uart_service = uart_connection[UARTService]
         while uart_connection.connected:
-            # Returns b'' if nothing was read.
-            if (uart_service and uart_service.read()):
-                # First byte contains the length of the telegram
-                decode_c(uart_service.read())
+            data = uart_service.readline()
+            if data is not None:
+                decode_c(uart_service.readline())
+                time.sleep(1)
+        # print('read: ', len(uart_service.read()))
+        # print('readline: ', len(uart_service.readline()))
+        # if (len(uart_service.readline()) >= 57):
+        #     decode_c(uart_service.readline())
+        # # Returns b'' if nothing was read.
+        # if (uart_service and uart_service.readline()):
+        #     # First byte contains the length of the telegram
+        #     decode_c(uart_service.readline())
+
+    ble.stop_scan()
