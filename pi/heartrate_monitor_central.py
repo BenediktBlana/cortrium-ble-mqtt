@@ -1,9 +1,13 @@
 """Example of how to create a Central device/GATT Client"""
 from enum import IntEnum
 import struct
+import json
+from datetime import datetime
+import traceback
 
 from bluezero import adapter
 from bluezero import central
+import paho.mqtt.client as mqtt
 
 # Documentation can be found on Bluetooth.com
 # https://www.bluetooth.com/specifications/specs/heart-rate-service-1-0/
@@ -21,9 +25,9 @@ from bluezero import central
 # https://github.com/oesmith/gatt-xml/blob/master/org.bluetooth.characteristic.heart_rate_control_point.xml
 
 # constants
-UART_SERVICE = '6E400001-B5A3-F393-E0A9-E50E24DCCA9E'
-RX_CHARACTERISTIC = '6E400002-B5A3-F393-E0A9-E50E24DCCA9E'
-TX_CHARACTERISTIC = '6E400003-B5A3-F393-E0A9-E50E24DCCA9E'
+UART_SERVICE = "6E400001-B5A3-F393-E0A9-E50E24DCCA9E"
+RX_CHARACTERISTIC = "6E400002-B5A3-F393-E0A9-E50E24DCCA9E"
+TX_CHARACTERISTIC = "6E400003-B5A3-F393-E0A9-E50E24DCCA9E"
 
 
 class HeartRateMeasurementFlags(IntEnum):
@@ -53,7 +57,6 @@ def convert_8bit_sign_value(value):
 
 
 def decode_c(Line):
-
     C1_Value = 0
     C2_Value = 0
     C3_Value = 0
@@ -71,150 +74,183 @@ def decode_c(Line):
     Samples = Line[index]
     index += 1
 
-    Acc_X = convert_16bit_sign_value((((Line[index] << 4) & 0xFF0) | (
-        (Line[index + 1] >> 4) & 0x0F)) << 4)  # // 5 6 // 0xFFF0
+    Acc_X = convert_16bit_sign_value(
+        (((Line[index] << 4) & 0xFF0) | ((Line[index + 1] >> 4) & 0x0F)) << 4
+    )  # // 5 6 // 0xFFF0
     Acc_Y = convert_16bit_sign_value(
-        (((Line[index + 1] & 0x0F) << 8) | (Line[index + 2] & 0xFF)) << 4)  # // 6 7 // 0xFFF0
+        (((Line[index + 1] & 0x0F) << 8) | (Line[index + 2] & 0xFF)) << 4
+    )  # // 6 7 // 0xFFF0
     Acc_Z = convert_16bit_sign_value(
-        (((Line[index + 3] << 4) & 0xFF0) | ((Line[index + 4] >> 4) & 0x0F)) << 4)  # // 8 9 // 0xFFF0
+        (((Line[index + 3] << 4) & 0xFF0) | ((Line[index + 4] >> 4) & 0x0F)) << 4
+    )  # // 8 9 // 0xFFF0
 
-    if (Acc_X and Acc_Y and Acc_Z):
-        print(f'Accelererometer X: {Acc_X/16} Y: {Acc_Y/16} Z: {Acc_Z/16}')
+    if Acc_X and Acc_Y and Acc_Z:
+        current_time = datetime.now().strftime("%H:%M:%S.%f")[:-3]
+        print(f"{current_time} Accelerometer X: {Acc_X/16} Y: {Acc_Y/16} Z: {Acc_Z/16}")
+        client.publish("pi/accelerometer", f" {Acc_X/16} Y: {Acc_Y/16} Z: {Acc_Z/16}")
 
-    index += 4
-    Events = Line[index] & 0x0F
-    index += 1
+    # index += 4
+    # Events = Line[index] & 0x0F
+    # index += 1
 
-    if Events != 0x00:  # Read event bytes
-        # index = index + 2/4/6/8
-        if (Events & 0x01) == 0x01:  # Vbat event
-            value = ((Line[index] << 8) & 0xFF00) | (
-                Line[index + 1] & 0x00FF)  # 10 11
-            index += 2
-            fVbat = float(value) * 0.6 * 3 * 3 / 1024
-            # print("VBat fVbat = {}".format(fVbat))
+    # if Events != 0x00:  # Read event bytes
+    #     # index = index + 2/4/6/8
+    #     if (Events & 0x01) == 0x01:  # Vbat event
+    #         value = ((Line[index] << 8) & 0xFF00) | (Line[index + 1] & 0x00FF)  # 10 11
+    #         index += 2
+    #         fVbat = float(value) * 0.6 * 3 * 3 / 1024
+    #         # print("VBat fVbat = {}".format(fVbat))
 
-        if (Events & 0x02) == 0x02:  # LOD event
-            value = ((Line[index] << 8) & 0xFF00) | (
-                Line[index + 1] & 0x00FF)  # 10 11
-            index += 2
-            # print("LOD_Active = {}".format(value))
+    #     if (Events & 0x02) == 0x02:  # LOD event
+    #         value = ((Line[index] << 8) & 0xFF00) | (Line[index + 1] & 0x00FF)  # 10 11
+    #         index += 2
+    #         # print("LOD_Active = {}".format(value))
 
-        if (Events & 0x04) == 0x04:  # Button event
-            Button = ((Line[index] << 8) & 0xFF00) | (
-                Line[index + 1] & 0x00FF)  # 10 11
-            index += 2
-            # print("Button = {}".format(Button))
+    #     if (Events & 0x04) == 0x04:  # Button event
+    #         Button = ((Line[index] << 8) & 0xFF00) | (Line[index + 1] & 0x00FF)  # 10 11
+    #         index += 2
+    #         # print("Button = {}".format(Button))
 
-    C1_Compression = 0
-    C2_Compression = 0
-    C3_Compression = 0
+    # C1_Compression = 0
+    # C2_Compression = 0
+    # C3_Compression = 0
 
-    # Number of samples determines how many bytes are used for compression mask
-    if Samples > 12:
-        C1_Compression = ((Line[index] << 24) & 0xFF000000) | ((Line[index + 1] << 16) & 0x00FF0000) | (
-            (Line[index + 2] << 8) & 0x0000FF00) | (Line[index + 3] & 0x000000FF)  # 10 11 12 13
-        C2_Compression = ((Line[index + 4] << 24) & 0xFF000000) | ((Line[index + 5] << 16) & 0x00FF0000) | (
-            (Line[index + 6] << 8) & 0x0000FF00) | (Line[index + 7] & 0x000000FF)  # 14 15 16 17
-        C3_Compression = ((Line[index + 8] << 24) & 0xFF000000) | ((Line[index + 9] << 16) & 0x00FF0000) | (
-            (Line[index + 10] << 8) & 0x0000FF00) | (Line[index + 11] & 0x000000FF)  # 18 19 20 21
-        index += 12
-    elif Samples > 8:
-        C1_Compression = ((Line[index] << 16) & 0xFF0000) | (
-            (Line[index + 1] << 8) & 0x00FF00) | (Line[index + 2] & 0x0000FF)  # 10 11 12
-        C2_Compression = ((Line[index + 3] << 16) & 0xFF0000) | (
-            (Line[index + 4] << 8) & 0x00FF00) | (Line[index + 5] & 0x0000FF)  # 13 14 15
-        C3_Compression = ((Line[index + 6] << 16) & 0xFF0000) | (
-            (Line[index + 7] << 8) & 0x00FF00) | (Line[index + 8] & 0x0000FF)  # 16 17 18
-        index += 9
-    else:
-        C1_Compression = ((Line[index] << 8) & 0xFF00) | (
-            Line[index + 1] & 0x00FF)  # 10 11
-        C2_Compression = ((Line[index + 2] << 8) &
-                          0xFF00) | (Line[index + 3] & 0x00FF)  # 12 13
-        C3_Compression = ((Line[index + 4] << 8) &
-                          0xFF00) | (Line[index + 5] & 0x00FF)  # 14 15
-        index += 6
+    # # Number of samples determines how many bytes are used for compression mask
+    # if Samples > 12:
+    #     C1_Compression = (
+    #         ((Line[index] << 24) & 0xFF000000)
+    #         | ((Line[index + 1] << 16) & 0x00FF0000)
+    #         | ((Line[index + 2] << 8) & 0x0000FF00)
+    #         | (Line[index + 3] & 0x000000FF)
+    #     )  # 10 11 12 13
+    #     C2_Compression = (
+    #         ((Line[index + 4] << 24) & 0xFF000000)
+    #         | ((Line[index + 5] << 16) & 0x00FF0000)
+    #         | ((Line[index + 6] << 8) & 0x0000FF00)
+    #         | (Line[index + 7] & 0x000000FF)
+    #     )  # 14 15 16 17
+    #     C3_Compression = (
+    #         ((Line[index + 8] << 24) & 0xFF000000)
+    #         | ((Line[index + 9] << 16) & 0x00FF0000)
+    #         | ((Line[index + 10] << 8) & 0x0000FF00)
+    #         | (Line[index + 11] & 0x000000FF)
+    #     )  # 18 19 20 21
+    #     index += 12
+    # elif Samples > 8:
+    #     C1_Compression = (
+    #         ((Line[index] << 16) & 0xFF0000)
+    #         | ((Line[index + 1] << 8) & 0x00FF00)
+    #         | (Line[index + 2] & 0x0000FF)
+    #     )  # 10 11 12
+    #     C2_Compression = (
+    #         ((Line[index + 3] << 16) & 0xFF0000)
+    #         | ((Line[index + 4] << 8) & 0x00FF00)
+    #         | (Line[index + 5] & 0x0000FF)
+    #     )  # 13 14 15
+    #     C3_Compression = (
+    #         ((Line[index + 6] << 16) & 0xFF0000)
+    #         | ((Line[index + 7] << 8) & 0x00FF00)
+    #         | (Line[index + 8] & 0x0000FF)
+    #     )  # 16 17 18
+    #     index += 9
+    # else:
+    #     C1_Compression = ((Line[index] << 8) & 0xFF00) | (
+    #         Line[index + 1] & 0x00FF
+    #     )  # 10 11
+    #     C2_Compression = ((Line[index + 2] << 8) & 0xFF00) | (
+    #         Line[index + 3] & 0x00FF
+    #     )  # 12 13
+    #     C3_Compression = ((Line[index + 4] << 8) & 0xFF00) | (
+    #         Line[index + 5] & 0x00FF
+    #     )  # 14 15
+    #     index += 6
 
-    C1_Diff = 0
-    C2_Diff = 0
-    C3_Diff = 0
+    # C1_Diff = 0
+    # C2_Diff = 0
+    # C3_Diff = 0
 
-    tmp_buf = 0
-    bitmast = 0
+    # tmp_buf = 0
+    # bitmast = 0
 
-    for i in range(Samples - 1, -1, -1):
-        bitmask = (C1_Compression >> (i * 2)) & 0x03
+    # for i in range(Samples - 1, -1, -1):
+    #     bitmask = (C1_Compression >> (i * 2)) & 0x03
 
-        if bitmask == 2:
-            tmp_buf = ((Line[index] << 16) & 0xFF0000) | (
-                (Line[index + 1] << 8) & 0x00FF00) | ((Line[index + 2]) & 0x0000FF)
-            C1_Diff = convert_24bit_sign_value(tmp_buf)
-            index += 3
-        elif bitmask == 1:
-            tmp_buf = ((Line[index] << 8) & 0xFF00) | (
-                Line[index + 1] & 0x00FF)
-            C1_Diff = convert_16bit_sign_value(tmp_buf)
-            index += 2
-        else:
-            tmp_buf = (Line[index] & 0x00FF)
-            C1_Diff = convert_8bit_sign_value(tmp_buf)
-            index += 1
+    #     if bitmask == 2:
+    #         tmp_buf = (
+    #             ((Line[index] << 16) & 0xFF0000)
+    #             | ((Line[index + 1] << 8) & 0x00FF00)
+    #             | ((Line[index + 2]) & 0x0000FF)
+    #         )
+    #         C1_Diff = convert_24bit_sign_value(tmp_buf)
+    #         index += 3
+    #     elif bitmask == 1:
+    #         tmp_buf = ((Line[index] << 8) & 0xFF00) | (Line[index + 1] & 0x00FF)
+    #         C1_Diff = convert_16bit_sign_value(tmp_buf)
+    #         index += 2
+    #     else:
+    #         tmp_buf = Line[index] & 0x00FF
+    #         C1_Diff = convert_8bit_sign_value(tmp_buf)
+    #         index += 1
 
-        bitmask = (C2_Compression >> (i * 2)) & 0x03
+    #     bitmask = (C2_Compression >> (i * 2)) & 0x03
 
-        if bitmask == 2:
-            tmp_buf = ((Line[index] << 16) & 0xFF0000) | (
-                (Line[index + 1] << 8) & 0x00FF00) | ((Line[index + 2]) & 0x0000FF)
-            C2_Diff = convert_24bit_sign_value(tmp_buf)
-            index += 3
-        elif bitmask == 1:
-            tmp_buf = ((Line[index] << 8) & 0xFF00) | (
-                Line[index + 1] & 0x00FF)
-            C2_Diff = convert_16bit_sign_value(tmp_buf)
-            index += 2
-        else:
-            tmp_buf = (Line[index] & 0x00FF)
-            C2_Diff = convert_8bit_sign_value(tmp_buf)
-            index += 1
+    #     if bitmask == 2:
+    #         tmp_buf = (
+    #             ((Line[index] << 16) & 0xFF0000)
+    #             | ((Line[index + 1] << 8) & 0x00FF00)
+    #             | ((Line[index + 2]) & 0x0000FF)
+    #         )
+    #         C2_Diff = convert_24bit_sign_value(tmp_buf)
+    #         index += 3
+    #     elif bitmask == 1:
+    #         tmp_buf = ((Line[index] << 8) & 0xFF00) | (Line[index + 1] & 0x00FF)
+    #         C2_Diff = convert_16bit_sign_value(tmp_buf)
+    #         index += 2
+    #     else:
+    #         tmp_buf = Line[index] & 0x00FF
+    #         C2_Diff = convert_8bit_sign_value(tmp_buf)
+    #         index += 1
 
-        bitmask = (C3_Compression >> (i * 2)) & 0x03
+    #     bitmask = (C3_Compression >> (i * 2)) & 0x03
 
-        if bitmask == 2:
-            tmp_buf = ((Line[index] << 16) & 0xFF0000) | (
-                (Line[index + 1] << 8) & 0x00FF00) | ((Line[index + 2]) & 0x0000FF)
-            C3_Diff = convert_24bit_sign_value(tmp_buf)
-            index += 3
-        elif bitmask == 1:
-            tmp_buf = ((Line[index] << 8) & 0xFF00) | (
-                Line[index + 1] & 0x00FF)
-            C3_Diff = convert_16bit_sign_value(tmp_buf)
-            index += 2
-        else:
-            tmp_buf = (Line[index] & 0x00FF)
-            C3_Diff = convert_8bit_sign_value(tmp_buf)
-            index += 1
+    #     if bitmask == 2:
+    #         tmp_buf = (
+    #             ((Line[index] << 16) & 0xFF0000)
+    #             | ((Line[index + 1] << 8) & 0x00FF00)
+    #             | ((Line[index + 2]) & 0x0000FF)
+    #         )
+    #         C3_Diff = convert_24bit_sign_value(tmp_buf)
+    #         index += 3
+    #     elif bitmask == 1:
+    #         tmp_buf = ((Line[index] << 8) & 0xFF00) | (Line[index + 1] & 0x00FF)
+    #         C3_Diff = convert_16bit_sign_value(tmp_buf)
+    #         index += 2
+    #     else:
+    #         tmp_buf = Line[index] & 0x00FF
+    #         C3_Diff = convert_8bit_sign_value(tmp_buf)
+    #         index += 1
 
-        if index >= Length:
-            print("decode error : ( index > Length ) : " +
-                  str(index) + " >= " + str(Length))
+    #     if index >= Length:
+    #         print(
+    #             "decode error : ( index > Length ) : "
+    #             + str(index)
+    #             + " >= "
+    #             + str(Length)
+    #         )
 
-        C1_Value += C1_Diff
-        C2_Value += C2_Diff
-        C3_Value += C3_Diff
+    #     C1_Value += C1_Diff
+    #     C2_Value += C2_Diff
+    #     C3_Value += C3_Diff
 
-        print(C1_Value, C2_Value, C3_Value)
+    #     print(C1_Value, C2_Value, C3_Value)
 
-        iECGindex = Samples - 1 - i
-        # decoded_iECG1[iECGindex] = C1_Value
-        # decoded_iECG2[iECGindex] = C2_Value
-        # decoded_iECG3[iECGindex] = C3_Value
+    #     iECGindex = Samples - 1 - i
+    #     # decoded_iECG1[iECGindex] = C1_Value
+    #     # decoded_iECG2[iECGindex] = C2_Value
+    #     # decoded_iECG3[iECGindex] = C3_Value
 
 
-def scan_for_heartrate_monitors(
-        adapter_address=None,
-        hrm_address=None,
-        timeout=5.0):
+def scan_for_heartrate_monitors(adapter_address=None, hrm_address=None, timeout=5.0):
     """
     Called to scan for BLE devices advertising the Heartrate Service UUID
     If there are multiple adapters on your system, this will scan using
@@ -229,6 +265,7 @@ def scan_for_heartrate_monitors(
     for dongle in adapter.Adapter.available():
         # Filter dongles by adapter_address if specified
         if adapter_address and adapter_address.upper() != dongle.address():
+            print("Adapter found: ", adapter_address)
             continue
 
         # Actually listen to nearby advertisements for timeout seconds
@@ -236,6 +273,7 @@ def scan_for_heartrate_monitors(
 
         # Iterate through discovered devices
         for dev in central.Central.available(dongle.address):
+            print("device discovered: ", dev.alias, dev.address)
             # Filter devices if we specified a HRM address
             if hrm_address and hrm_address == dev.address:
                 yield dev
@@ -252,7 +290,7 @@ def on_new_heart_rate_measurement(iface, changed_props, invalidated_props):
     :param changed_props: updated properties for this event, contains Value
     :param invalidated_props: dvus advanced data
     """
-    value = changed_props.get('Value', None)
+    value = changed_props.get("Value", None)
     if not value:
         return
     # decode bytearray and red accelerometer values
@@ -269,9 +307,7 @@ def connect_and_run(dev=None, device_address=None):
     """
     # Create Interface to Central
     if dev:
-        monitor = central.Central(
-            adapter_addr=dev.adapter,
-            device_addr=dev.address)
+        monitor = central.Central(adapter_addr=dev.adapter, device_addr=dev.address)
     else:
         monitor = central.Central(device_addr=device_address)
 
@@ -307,14 +343,24 @@ def connect_and_run(dev=None, device_address=None):
     monitor.disconnect()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
+    print("Starting...")
+    client = mqtt.Client()
+    client.on_connect = print("MQTT connected")
+    client.username_pw_set("pi", "benedikt")
+    client.connect("3.73.214.233", 1883, 60)
     # Discovery nearby heart rate monitors
-    devices = scan_for_heartrate_monitors()
+    devices = scan_for_heartrate_monitors(timeout=5.0)
     for hrm in devices:
         print("Heart Rate Measurement Device Found!")
-
-        # Connect to first available heartrate monitor
         connect_and_run(hrm)
-
-        # Only demo the first device found
+        # D3:33:51:84:40:DC
         break
+
+# connect
+# primary
+# char-desc
+# char-write-req 0100
+
+# gatttool -t random --device=D3:33:51:84:40:DC --interactive
+# char-write-req 0x0010 0100

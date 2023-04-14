@@ -30,8 +30,8 @@ def convert_16bit_sign_value(value):
 
 def decode_c(Line):
     Length = Line[0]
-    if (Length < 57):
-        return print('Telegram is too short')
+    if Length < 57:
+        return print("Telegram is too short")
     else:
         print("Telegram length: ", Length)
     index = 0
@@ -46,19 +46,22 @@ def decode_c(Line):
     Samples = Line[index]
     index += 1
 
-    Acc_X = convert_16bit_sign_value((((Line[index] << 4) & 0xFF0) | (
-        (Line[index + 1] >> 4) & 0x0F)) << 4)  # // 5 6 // 0xFFF0
+    Acc_X = convert_16bit_sign_value(
+        (((Line[index] << 4) & 0xFF0) | ((Line[index + 1] >> 4) & 0x0F)) << 4
+    )  # // 5 6 // 0xFFF0
     Acc_Y = convert_16bit_sign_value(
-        (((Line[index + 1] & 0x0F) << 8) | (Line[index + 2] & 0xFF)) << 4)  # // 6 7 // 0xFFF0
+        (((Line[index + 1] & 0x0F) << 8) | (Line[index + 2] & 0xFF)) << 4
+    )  # // 6 7 // 0xFFF0
     Acc_Z = convert_16bit_sign_value(
-        (((Line[index + 3] << 4) & 0xFF0) | ((Line[index + 4] >> 4) & 0x0F)) << 4)  # // 8 9 // 0xFFF0
+        (((Line[index + 3] << 4) & 0xFF0) | ((Line[index + 4] >> 4) & 0x0F)) << 4
+    )  # // 8 9 // 0xFFF0
 
-    if (Acc_X and Acc_Y and Acc_Z):
-        print(f'Accelererometer X: {Acc_X/16} Y: {Acc_Y/16} Z: {Acc_Z/16}')
+    if Acc_X and Acc_Y and Acc_Z:
+        print(f"Accelererometer X: {Acc_X/16} Y: {Acc_Y/16} Z: {Acc_Z/16}")
 
     topic = "cortrium/accelerometer"
     message = f'{{ "x": "{Acc_X/16}", "y": {Acc_Y/16}, "y": {Acc_Z/16} }}'
-    client.publish(topic, message)
+    # client.publish(topic, message)
 
     # index += 4
     # Events = Line[index] & 0x0F
@@ -68,15 +71,15 @@ def decode_c(Line):
     # LOD_Active = 0x00
 
 
-# set up MQTT
-client = mqtt.Client()
-client.connect("localhost", 1883)
+# # set up MQTT
+# client = mqtt.Client()
+# client.connect("localhost", 1883)
 
 while True:
     if not uart_connection:
         print("Trying to connect...")
         for adv in ble.start_scan(ProvideServicesAdvertisement):
-            if adv.complete_name == 'C3050319':
+            if adv.complete_name == "C3050319":
                 print("RSSI: ", adv.rssi)
                 print("RSSI: ", adv.address)
 
